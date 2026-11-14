@@ -1,0 +1,88 @@
+rules_version = '2';
+
+// app-invite-kit: security rules for the Firestore store, with the default collection names
+// (invites, connections, connectionMembers). Copy the block between the markers into your own firestore.rules.
+// Change the two numbers to match your config:
+//   MAX_EXPIRY_MS  = expiryMinutes × 60000   (1800000 = 30 minutes)
+//   MAX_MEMBERS    = maxMembers              (2 = one-to-one)
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ---- app-invite-kit: start ----
+    function inviteSignedIn() { return request.auth != null; }
+    function inviteMe() { return request.auth.uid; }
+    function inviteMemberDoc(uid) { return /databases/$(database)/documents/connectionMembers/$(uid); }
+    function inviteConnection(id) { return /databases/$(database)/documents/connections/$(id); }
+    function inviteDoc(code) { return /databases/$(database)/documents/invites/$(code); }
+
+    match /invites/{code} {
+      // Knowing the code is the secret: anyone signed in may read one code; only the host may list theirs.
+      allow get: if inviteSignedIn();
+      allow list: if inviteSignedIn() && resource.data.hostId == inviteMe();
+      // The host makes a code while free, or (groups) for their own connection while it has room.
+      allow create: if inviteSignedIn()
+        && request.resource.data.keys().hasOnly(['hostId', 'createdAt', 'expiresAt', 'usedBy', 'connectionId'])
+        && request.resource.data.hostId == inviteMe()
+        && request.resource.data.usedBy == null
+        && request.resource.data.expiresAt <= request.time.toMillis() + 1800000 // MAX_EXPIRY_MS
+        && (
+          (!exists(inviteMemberDoc(inviteMe())) && request.resource.data.get('connectionId', null) == null)
+          || (request.resource.data.get('connectionId', null) == get(inviteMemberDoc(inviteMe())).data.connectionId
+              && get(inviteConnection(request.resource.data.connectionId)).data.hostId == inviteMe()
+              && get(inviteConnection(request.resource.data.connectionId)).data.memberIds.size() < 2) // MAX_MEMBERS
+        );
+      allow delete: if inviteSignedIn() && resource.data.hostId == inviteMe() && resource.data.usedBy == null;
+      // A guest marks an unused, unexpired code as used by themselves, and nothing else.
+      allow update: if inviteSignedIn()
+        && resource.data.usedBy == null
+        && request.time.toMillis() < resource.data.expiresAt
+        && resource.data.hostId != inviteMe()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedBy'])
+        && request.resource.data.usedBy == inviteMe();
+    }
+
+    match /connections/{id} {
+      allow get: if inviteSignedIn() && inviteMe() in resource.data.memberIds;
+      // A new connection is made by the guest in the same write that uses the code.
+      allow create: if inviteSignedIn()
+        && request.resource.data.keys().hasOnly(['hostId', 'guestId', 'createdAt', 'memberIds', 'invite'])
+        && request.resource.data.guestId == inviteMe()
+        && request.resource.data.memberIds == [request.resource.data.hostId, inviteMe()]
+        && get(inviteDoc(request.resource.data.invite)).data.hostId == request.resource.data.hostId
+        && get(inviteDoc(request.resource.data.invite)).data.get('connectionId', null) == null
+        && getAfter(inviteDoc(request.resource.data.invite)).data.usedBy == inviteMe();
+      allow update: if inviteSignedIn() && (
+        // Groups: a guest joins with a code made for this connection, while it has room.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'invite'])
+          && request.resource.data.memberIds == resource.data.memberIds.concat([inviteMe()])
+          && request.resource.data.memberIds.size() <= 2 // MAX_MEMBERS
+          && get(inviteDoc(request.resource.data.invite)).data.get('connectionId', null) == id
+          && getAfter(inviteDoc(request.resource.data.invite)).data.usedBy == inviteMe())
+        // Groups: a guest leaves; the rest stay.
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+          && inviteMe() != resource.data.hostId
+          && request.resource.data.memberIds == resource.data.memberIds.removeAll([inviteMe()]))
+      );
+      // The host ends it for everyone; in a one-to-one connection either person can.
+      allow delete: if inviteSignedIn() && inviteMe() in resource.data.memberIds
+        && (inviteMe() == resource.data.hostId || resource.data.memberIds.size() <= 2);
+    }
+
+    // One row per person: this is what keeps everyone in one connection at a time.
+    match /connectionMembers/{uid} {
+      // Only says whether someone is connected (and the id); the connection itself stays private.
+      allow get: if inviteSignedIn();
+      allow create: if inviteSignedIn()
+        && !exists(inviteMemberDoc(uid))
+        && request.resource.data.keys().hasOnly(['connectionId'])
+        && (
+          (uid == inviteMe() && inviteMe() in getAfter(inviteConnection(request.resource.data.connectionId)).data.memberIds)
+          || (uid == getAfter(inviteConnection(request.resource.data.connectionId)).data.hostId
+              && inviteMe() == getAfter(inviteConnection(request.resource.data.connectionId)).data.guestId
+              && !exists(inviteConnection(request.resource.data.connectionId)))
+        );
+      allow delete: if inviteSignedIn()
+        && inviteMe() in get(inviteConnection(resource.data.connectionId)).data.memberIds;
+    }
+    // ---- app-invite-kit: end ----
+  }
+}
