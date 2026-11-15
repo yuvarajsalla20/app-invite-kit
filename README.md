@@ -14,11 +14,34 @@ track of who is connected to whom.
 - **Any database**: storage sits behind a small `InviteStore` interface. A Cloud Firestore store and security rules come with the kit; a memory store is included for tests.
 - **No words or screens**: results carry a reason (`'expired'`, `'used'` …) and your app says it in its own words and language.
 
-## Quick start
+**Current version: 1.0.0** (tag `v1.0.0`)
 
-```bash
-npm install "app-invite-kit@git+https://github.com/yuvarajsalla20/app-invite-kit.git#v1.0.0"
+One of the shared kits, alongside [app-core-kit](https://github.com/yuvarajsalla20/app-core-kit), [app-auth-kit](https://github.com/yuvarajsalla20/app-auth-kit), [app-account-kit](https://github.com/yuvarajsalla20/app-account-kit) and [app-settings-kit](https://github.com/yuvarajsalla20/app-settings-kit). A "Connect as Family" page in Settings is typically an app-settings-kit `extraPages` entry whose content uses this kit.
+
+## Install
+
+```jsonc
+// package.json
+"dependencies": {
+  "app-invite-kit": "git+https://github.com/yuvarajsalla20/app-invite-kit.git#<full SHA of v1.0.0>"
+},
+"kitVersions": {
+  "app-invite-kit": "v1.0.0"
+}
 ```
+
+Pin the full commit SHA of a release tag, and write the tag in `kitVersions`. Find a SHA with `git ls-remote https://github.com/yuvarajsalla20/app-invite-kit refs/tags/v1.0.0`.
+
+**Peer dependencies:** `firebase` ≥ 10, optional, needed only for `app-invite-kit/firestore`. The core has no dependencies; pass a secure random source (`expo-crypto`, or `crypto.getRandomValues` on the web and Node 19+).
+
+## Entry points
+
+| Import | What it holds |
+|---|---|
+| `app-invite-kit` | `createInviteKit`, `memoryInviteStore`, the code helpers (`makeCode`, `normalizeCode`, `formatCode`, `DEFAULT_ALPHABET`, `DEFAULT_LENGTH`), `DEFAULT_MAX_MEMBERS`, `KIT_NAME`, `KIT_VERSION` and the types. No database code |
+| `app-invite-kit/firestore` | `firestoreInviteStore(db, names?)` |
+
+## Quick start
 
 ```ts
 // invites.ts — one per app
@@ -149,10 +172,11 @@ cd firestore-tests     # optional: the real Firestore store and rules (needs Jav
 npm install && npm test
 ```
 
+To release: bump `version` in `package.json` and `KIT_VERSION` in `src/kit.ts`, add a note below, merge, then tag the merged commit.
+
 ## Versions
 
-Every release is tagged (`v1.0.0`). Pin a tag or its commit SHA in your app. Within a major version changes stay
-backward compatible: new options default to today's behavior.
+Every release is tagged (`v1.0.0`). Within a major version changes stay backward compatible: new options default to today's behavior.
 
 ### 1.0.0
 
