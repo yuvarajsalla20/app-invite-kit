@@ -1,5 +1,5 @@
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, where, type Firestore } from 'firebase/firestore';
-import type { AcceptResult, Connection, Invite, InviteStore } from './types';
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, where, type Firestore } from 'firebase/firestore';
+import type { AcceptResult, Connection, Invite, InviteProblem, InviteStore } from './types';
 
 /** Collection names, so each app keeps its own. */
 export interface FirestoreInviteNames {
@@ -10,6 +10,12 @@ export interface FirestoreInviteNames {
   /** connectionMembers/{userId}: { connectionId }. One per person: this is what keeps each person in one connection. */
   members: string;
 }
+
+/**
+ * How far a phone's clock may be from Google's. The security rules accept an invite whose createdAt is within this of
+ * the server's time (CLOCK_MARGIN_MS in docs/firestore.rules), and a refusal this close to expiresAt is read as expired.
+ */
+export const CLOCK_MARGIN_MS = 10 * 60_000;
 
 export const DEFAULT_FIRESTORE_NAMES: FirestoreInviteNames = { invites: 'invites', connections: 'connections', members: 'connectionMembers' };
 
@@ -32,7 +38,7 @@ const toConnection = (id: string, d: Record<string, unknown>): Connection => ({
 
 /**
  * An InviteStore on Cloud Firestore (works on the free Spark plan: no Cloud Functions). Accepting runs in one
- * transaction. Pair it with the security rules in docs/firestore-rules.md, which enforce the same rules on the server.
+ * transaction. Pair it with the security rules in docs/firestore.rules, which enforce the same rules on the server.
  */
 export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInviteNames> = {}): InviteStore {
   const n = { ...DEFAULT_FIRESTORE_NAMES, ...names };
@@ -52,6 +58,21 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
     return m.exists() ? ((m.data().connectionId as string | undefined) ?? null) : null;
   };
 
+  /** Why the server refused an accept that passed every check on the phone, or null when it can't be told. */
+  const whyRefused = async (code: string, now: number): Promise<InviteProblem | null> => {
+    const s = await getDoc(inviteRef(code));
+    if (!s.exists()) return 'not-found';
+    const invite = toInvite(code, s.data());
+    if (invite.usedBy) return 'used';
+    // The phone's clock is behind the server's: on the server the code has already run out.
+    if (now >= invite.expiresAt - CLOCK_MARGIN_MS) return 'expired';
+    if (!invite.connectionId) return null;
+    const hostIn = await connectionIdOf(invite.hostId);
+    if (hostIn !== invite.connectionId) return 'not-found';
+    // The host is still in the group the code was made for, so the only rule left is room: it filled up meanwhile.
+    return 'full';
+  };
+
   return {
     async find(code) {
       const s = await getDoc(inviteRef(code));
@@ -64,7 +85,7 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
     },
     connectionOf,
     connectionIdOf,
-    async accept(code, guestId, now, maxMembers) {
+    async accept(code, guestId, now, _maxMembers) {
       const result = await runTransaction(db, async (tx): Promise<AcceptResult> => {
         const s = await tx.get(inviteRef(code));
         if (!s.exists()) return { ok: false, problem: 'not-found' };
@@ -74,10 +95,11 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
         if ((await tx.get(memberRef(guestId))).exists()) return { ok: false, problem: 'already-connected' };
         const hostRow = await tx.get(memberRef(invite.hostId));
         const hostIn = hostRow.exists() ? (hostRow.data().connectionId as string) : null;
+        if (invite.connectionId && hostIn !== invite.connectionId) return { ok: false, problem: 'not-found' };
         if (hostIn && hostIn !== invite.connectionId) return { ok: false, problem: 'host-connected' };
         if (hostIn) {
           // A group: the guest joins the host's connection. The guest can't read it yet, so the security rules check
-          // there is room (memberIds.size() <= MAX_MEMBERS); a refusal there means the group is full.
+          // there is room (memberIds.size() <= MAX_MEMBERS); whyRefused below tells a full group from other refusals.
           tx.update(inviteRef(code), { usedBy: guestId });
           tx.update(doc(db, n.connections, hostIn), { memberIds: arrayUnion(guestId), invite: code });
           tx.set(memberRef(guestId), { connectionId: hostIn });
@@ -90,9 +112,11 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
         tx.set(memberRef(invite.hostId), { connectionId: ref.id });
         tx.set(memberRef(guestId), { connectionId: ref.id });
         return { ok: true, connection };
-      }).catch((e: { code?: string }) => {
-        // Only a group join can be refused after every check above passed: the group filled up meanwhile.
-        if (e?.code === 'permission-denied' && maxMembers > 2) return { ok: false, problem: 'full' } as AcceptResult;
+      }).catch(async (e: { code?: string }): Promise<AcceptResult> => {
+        if (e?.code !== 'permission-denied') throw e;
+        // Every check above passed on this phone, but the server said no. Work out why from what the guest can read.
+        const problem = await whyRefused(code, now);
+        if (problem) return { ok: false, problem };
         throw e;
       });
       // Now a member, the guest can read the whole connection.
@@ -109,8 +133,15 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
       }),
     removeMember: (connectionId, userId) =>
       runTransaction(db, async (tx) => {
+        const ref = doc(db, n.connections, connectionId);
+        const c = await tx.get(ref);
         tx.delete(memberRef(userId));
-        tx.update(doc(db, n.connections, connectionId), { memberIds: arrayRemove(userId) });
+        if (!c.exists()) return;
+        const before = toConnection(connectionId, c.data());
+        const memberIds = before.memberIds.filter((m) => m !== userId);
+        // guestId names the first guest still in the connection.
+        const guestId = before.guestId === userId ? (memberIds.find((m) => m !== before.hostId) ?? '') : before.guestId;
+        tx.update(ref, before.guestId === userId ? { memberIds, guestId } : { memberIds });
       }),
   };
 }

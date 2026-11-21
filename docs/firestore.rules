@@ -5,6 +5,8 @@ rules_version = '2';
 // Change the two numbers to match your config:
 //   MAX_EXPIRY_MS  = expiryMinutes × 60000   (1800000 = 30 minutes)
 //   MAX_MEMBERS    = maxMembers              (2 = one-to-one)
+// CLOCK_MARGIN_MS (600000 = 10 minutes) is how far a phone's clock may be from Google's when it makes a code; keep it
+// equal to CLOCK_MARGIN_MS in the kit. A code then works for at most MAX_EXPIRY_MS + CLOCK_MARGIN_MS of server time.
 service cloud.firestore {
   match /databases/{database}/documents {
     // ---- app-invite-kit: start ----
@@ -23,7 +25,13 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['hostId', 'createdAt', 'expiresAt', 'usedBy', 'connectionId'])
         && request.resource.data.hostId == inviteMe()
         && request.resource.data.usedBy == null
-        && request.resource.data.expiresAt <= request.time.toMillis() + 1800000 // MAX_EXPIRY_MS
+        // createdAt and expiresAt come from the phone's clock, which may run a little fast or slow.
+        && request.resource.data.createdAt is int
+        && request.resource.data.expiresAt is int
+        && request.resource.data.createdAt <= request.time.toMillis() + 600000 // CLOCK_MARGIN_MS
+        && request.resource.data.createdAt >= request.time.toMillis() - 600000 // CLOCK_MARGIN_MS
+        && request.resource.data.expiresAt > request.resource.data.createdAt
+        && request.resource.data.expiresAt - request.resource.data.createdAt <= 1800000 // MAX_EXPIRY_MS
         && (
           (!exists(inviteMemberDoc(inviteMe())) && request.resource.data.get('connectionId', null) == null)
           || (request.resource.data.get('connectionId', null) == get(inviteMemberDoc(inviteMe())).data.connectionId
@@ -31,13 +39,16 @@ service cloud.firestore {
               && get(inviteConnection(request.resource.data.connectionId)).data.memberIds.size() < 2) // MAX_MEMBERS
         );
       allow delete: if inviteSignedIn() && resource.data.hostId == inviteMe() && resource.data.usedBy == null;
-      // A guest marks an unused, unexpired code as used by themselves, and nothing else.
+      // A guest marks an unused, unexpired code as used by themselves, and nothing else, in the same write that puts
+      // them in the connection this code makes or joins (so nobody can spoil a code without joining).
       allow update: if inviteSignedIn()
         && resource.data.usedBy == null
         && request.time.toMillis() < resource.data.expiresAt
         && resource.data.hostId != inviteMe()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedBy'])
-        && request.resource.data.usedBy == inviteMe();
+        && request.resource.data.usedBy == inviteMe()
+        && !exists(inviteMemberDoc(inviteMe()))
+        && getAfter(inviteConnection(getAfter(inviteMemberDoc(inviteMe())).data.connectionId)).data.invite == code;
     }
 
     match /connections/{id} {
@@ -57,10 +68,12 @@ service cloud.firestore {
           && request.resource.data.memberIds.size() <= 2 // MAX_MEMBERS
           && get(inviteDoc(request.resource.data.invite)).data.get('connectionId', null) == id
           && getAfter(inviteDoc(request.resource.data.invite)).data.usedBy == inviteMe())
-        // Groups: a guest leaves; the rest stay.
-        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+        // Groups: a guest leaves; the rest stay. When the first guest leaves, guestId moves to the next guest.
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'guestId'])
           && inviteMe() != resource.data.hostId
-          && request.resource.data.memberIds == resource.data.memberIds.removeAll([inviteMe()]))
+          && request.resource.data.memberIds == resource.data.memberIds.removeAll([inviteMe()])
+          && (request.resource.data.guestId == resource.data.guestId
+              || (resource.data.guestId == inviteMe() && request.resource.data.guestId == request.resource.data.memberIds[1])))
       );
       // The host ends it for everyone; in a one-to-one connection either person can.
       allow delete: if inviteSignedIn() && inviteMe() in resource.data.memberIds
@@ -80,8 +93,14 @@ service cloud.firestore {
               && inviteMe() == getAfter(inviteConnection(request.resource.data.connectionId)).data.guestId
               && !exists(inviteConnection(request.resource.data.connectionId)))
         );
-      allow delete: if inviteSignedIn()
-        && inviteMe() in get(inviteConnection(resource.data.connectionId)).data.memberIds;
+      // A row goes only with its person: they leave (and are taken out of memberIds in the same write), or the whole
+      // connection ends in the same write. Nobody can free someone else while the connection still lists them.
+      allow delete: if inviteSignedIn() && (
+        (uid == inviteMe() && !exists(inviteConnection(resource.data.connectionId)))
+        || (inviteMe() in get(inviteConnection(resource.data.connectionId)).data.memberIds
+          && (!existsAfter(inviteConnection(resource.data.connectionId))
+            || (uid == inviteMe() && !(uid in getAfter(inviteConnection(resource.data.connectionId)).data.memberIds))))
+      );
     }
     // ---- app-invite-kit: end ----
   }

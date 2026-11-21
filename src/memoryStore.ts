@@ -23,6 +23,7 @@ export function memoryInviteStore(): InviteStore & { invites: Map<string, Invite
       if (now >= invite.expiresAt) return { ok: false, problem: 'expired' };
       if (await connectionOf(guestId)) return { ok: false, problem: 'already-connected' };
       const host = await connectionOf(invite.hostId);
+      if (invite.connectionId && host?.id !== invite.connectionId) return { ok: false, problem: 'not-found' };
       if (host && host.id !== invite.connectionId) return { ok: false, problem: 'host-connected' };
       if (host && host.memberIds.length >= maxMembers) return { ok: false, problem: 'full' };
       invite.usedBy = guestId;
@@ -37,7 +38,10 @@ export function memoryInviteStore(): InviteStore & { invites: Map<string, Invite
     disconnect: async (id) => void connections.delete(id),
     removeMember: async (id, userId) => {
       const c = connections.get(id);
-      if (c) c.memberIds = c.memberIds.filter((m) => m !== userId);
+      if (!c) return;
+      c.memberIds = c.memberIds.filter((m) => m !== userId);
+      // guestId names the first guest still in the connection.
+      if (c.guestId === userId) c.guestId = c.memberIds.find((m) => m !== c.hostId) ?? '';
     },
   };
 }

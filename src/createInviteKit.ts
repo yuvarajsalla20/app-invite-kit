@@ -24,6 +24,10 @@ export function createInviteKit({ store, config, random, hooks = {}, now = Date.
   if (!Number.isInteger(maxMembers) || maxMembers < 2) throw new Error('app-invite-kit: config.maxMembers must be a whole number of 2 or more.');
   const length = config.length ?? DEFAULT_LENGTH;
   const alphabet = config.alphabet ?? DEFAULT_ALPHABET;
+  // Typed codes are made comparable with normalizeCode (capitals, no spaces or dashes), so a code made from any other
+  // letter could never be found again.
+  if (alphabet !== normalizeCode(alphabet) || new Set(alphabet).size !== alphabet.length)
+    throw new Error('app-invite-kit: config.alphabet must be capitals and digits, each once, with no spaces or dashes.');
 
   /** The host's connection that still has room, or a reason the host can't invite anyone. */
   const hostRoom = async (hostId: string): Promise<{ ok: true; connection: Connection | null } | { ok: false; problem: 'already-connected' | 'full' }> => {
@@ -41,6 +45,8 @@ export function createInviteKit({ store, config, random, hooks = {}, now = Date.
     if (invite.hostId === guestId) return { ok: false, problem: 'own-code' };
     if (await store.connectionIdOf(guestId)) return { ok: false, problem: 'already-connected' };
     const hostIn = await store.connectionIdOf(invite.hostId);
+    // A group code made for a connection that has since ended (or that the host has left) no longer leads anywhere.
+    if (invite.connectionId && hostIn !== invite.connectionId) return { ok: false, problem: 'not-found' };
     if (hostIn && hostIn !== invite.connectionId) return { ok: false, problem: 'host-connected' };
     // Room in a group is re-checked by the store when accepting (the guest can't see the group's members yet).
     if (hooks.canJoin && !(await hooks.canJoin(guestId, invite))) return { ok: false, problem: 'not-allowed' };
@@ -100,7 +106,12 @@ export function createInviteKit({ store, config, random, hooks = {}, now = Date.
     async leave(userId: string): Promise<void> {
       const c = await store.connectionOf(userId);
       if (!c) return;
-      if (userId === c.hostId || c.memberIds.length <= 2) return store.disconnect(c.id);
+      if (userId === c.hostId) {
+        // The host's unused group codes were made for this connection: they stop working with it.
+        await store.disconnect(c.id);
+        return store.removeUnused(userId);
+      }
+      if (c.memberIds.length <= 2) return store.disconnect(c.id);
       return store.removeMember(c.id, userId);
     },
 
