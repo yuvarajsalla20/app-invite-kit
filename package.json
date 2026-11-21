@@ -1,6 +1,6 @@
 {
   "name": "app-invite-kit",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Reusable one-to-one invite codes for React Native / Expo apps: short readable codes, single use, expiry from the app's config, one connection per person. Storage behind an interface, with a Cloud Firestore store and security rules that work on the free Spark plan.",
   "main": "src/index.ts",
   "types": "src/index.ts",

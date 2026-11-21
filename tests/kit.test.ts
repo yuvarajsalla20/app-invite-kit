@@ -44,6 +44,15 @@ describe('invites', () => {
     kit = createInviteKit({ store, config: { expiryMinutes: 30 }, random: counter(), now: () => time });
   });
 
+  it('refuses an alphabet whose codes could never be typed back', () => {
+    const make = (alphabet: string) => () => createInviteKit({ store, config: { expiryMinutes: 30, alphabet }, random: counter() });
+    expect(make('abcdefghjkmnpqrstuvwxyz')).toThrow(/alphabet/);
+    expect(make('ABC DEF')).toThrow(/alphabet/);
+    expect(make('ABC-DEF')).toThrow(/alphabet/);
+    expect(make('ABCA')).toThrow(/alphabet/);
+    expect(make('ABCDEF234')).not.toThrow();
+  });
+
   it('expiry comes from config and must be set', () => {
     expect(() => createInviteKit({ store, config: { expiryMinutes: 0 }, random: counter() })).toThrow();
   });
@@ -162,6 +171,50 @@ describe('groups (maxMembers above 2)', () => {
     if (!c.ok) throw new Error();
     await kit.accept(c.invite.code, 'g1');
     expect(await kit.create('g1')).toEqual({ ok: false, problem: 'already-connected' });
+  });
+
+  it('a code made for a group that has ended no longer works', async () => {
+    const kit = setup(3);
+    const a = await kit.create('host');
+    if (!a.ok) throw new Error();
+    await kit.accept(a.invite.code, 'g1');
+    const b = await kit.create('host');
+    if (!b.ok) throw new Error();
+    await kit.leave('g1'); // only the host would be left, so the connection ends; code B stays behind
+    expect(await kit.check(b.invite.code, 'g2')).toEqual({ ok: false, problem: 'not-found' });
+    expect(await kit.accept(b.invite.code, 'g2')).toEqual({ ok: false, problem: 'not-found' });
+    expect(await kit.connectionOf('host')).toBeNull();
+  });
+
+  it('the host leaving a group also stops their unused codes', async () => {
+    const store = memoryInviteStore();
+    const kit = createInviteKit({ store, config: { expiryMinutes: 30, maxMembers: 3 }, random: counter(), now: () => 1_000 });
+    const a = await kit.create('host');
+    if (!a.ok) throw new Error();
+    await kit.accept(a.invite.code, 'g1');
+    const b = await kit.create('host');
+    if (!b.ok) throw new Error();
+    await kit.leave('host');
+    expect(store.invites.has(b.invite.code)).toBe(false);
+    expect(await kit.accept(b.invite.code, 'g2')).toEqual({ ok: false, problem: 'not-found' });
+  });
+
+  it('the store itself refuses a code whose group has ended', async () => {
+    const store = memoryInviteStore();
+    store.invites.set('OLDONE', { code: 'OLDONE', hostId: 'host', createdAt: 0, expiresAt: 10_000, usedBy: null, connectionId: 'gone' });
+    expect(await store.accept('OLDONE', 'g2', 1_000, 3)).toEqual({ ok: false, problem: 'not-found' });
+    expect(store.connections.size).toBe(0);
+  });
+
+  it('when the first guest leaves, the next guest becomes guestId', async () => {
+    const kit = setup(3);
+    for (const g of ['g1', 'g2']) {
+      const c = await kit.create('host');
+      if (!c.ok) throw new Error();
+      await kit.accept(c.invite.code, g);
+    }
+    await kit.leave('g1');
+    expect(await kit.connectionOf('host')).toMatchObject({ guestId: 'g2', memberIds: ['host', 'g2'] });
   });
 
   it('refuses a group size below 2', () => {

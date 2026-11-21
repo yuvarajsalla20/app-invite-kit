@@ -15,7 +15,7 @@ export interface Invite {
 export interface Connection {
   id: string;
   hostId: string;
-  /** The first guest. With maxMembers 2 this is the only one. */
+  /** The first guest still in it (it moves to the next guest when that one leaves). With maxMembers 2 this is the only one. */
   guestId: string;
   /** Everyone in it, host first. */
   memberIds: string[];
