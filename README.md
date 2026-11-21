@@ -16,7 +16,22 @@ track of who is connected to whom.
 
 **Current version: 2.0.0** (tag `v2.0.0`)
 
-One of the shared kits, alongside [app-core-kit](https://github.com/yuvarajsalla20/app-core-kit), [app-auth-kit](https://github.com/yuvarajsalla20/app-auth-kit), [app-account-kit](https://github.com/yuvarajsalla20/app-account-kit) and [app-settings-kit](https://github.com/yuvarajsalla20/app-settings-kit). A "Connect as Family" page in Settings is typically an app-settings-kit `extraPages` entry whose content uses this kit.
+Part of the shared kits:
+[app-core-kit](https://github.com/yuvarajsalla20/app-core-kit) ·
+[app-auth-kit](https://github.com/yuvarajsalla20/app-auth-kit) ·
+[app-account-kit](https://github.com/yuvarajsalla20/app-account-kit) ·
+[app-settings-kit](https://github.com/yuvarajsalla20/app-settings-kit) ·
+[app-subscriptions-kit](https://github.com/yuvarajsalla20/app-subscriptions-kit) ·
+[app-payments-kit](https://github.com/yuvarajsalla20/app-payments-kit) ·
+[app-export-kit](https://github.com/yuvarajsalla20/app-export-kit) ·
+[app-guard-kit](https://github.com/yuvarajsalla20/app-guard-kit) ·
+[app-theme-kit](https://github.com/yuvarajsalla20/app-theme-kit) ·
+**app-invite-kit** ·
+[app-goldrates-api-kit](https://github.com/yuvarajsalla20/app-goldrates-api-kit)
+
+Tools that work alongside them: [code-review-kit](https://github.com/yuvarajsalla20/code-review-kit) (reviews) and app-insights-kit (store numbers, private).
+
+A "Connect as Family" page in Settings is typically an app-settings-kit `extraPages` entry whose content uses this kit.
 
 ## Install
 
@@ -210,3 +225,7 @@ answer `'not-found'` instead of `'full'` (or a new connection, with the memory s
 
 First release: codes, create / check / accept / cancel / leave / disconnect, one connection per person, one-to-one or
 groups (`maxMembers`), `canCreate` / `canJoin` / `onConnected` hooks, memory and Firestore stores, Firestore rules.
+
+## Writing rule
+
+Every word this kit shows, and every line of its documentation, follows the shared [Writing rule](https://github.com/yuvarajsalla20/app-settings-kit#writing-rule-every-word-is-professional): Title Case for titles, rows and buttons; calm, complete sentences for captions and messages; "e.g.," for examples; no chatty fragments, slang or exclamation marks. Apps do not override these words; a change is made in the kit so that every app receives it.
