@@ -126,6 +126,16 @@ describe('groups through the real rules', async () => {
     expect(await kit('g3').accept(c.code, 'g3')).toEqual({ ok: false, problem: 'full' });
   });
 
+  it('a short-lived code for a group that filled up reads as full, not expired', async () => {
+    const short = { expiryMinutes: 5 }; // the whole life of the code is within the 10-minute clock margin
+    await join('g1');
+    const b = await kit('host', short).create('host');
+    const c = { ...b.invite, code: 'YYYYYY' };
+    await firestoreInviteStore(db('host')).save(c);
+    expect(await kit('g2', short).accept(b.invite.code, 'g2')).toMatchObject({ ok: true });
+    expect(await kit('g3', short).accept(c.code, 'g3')).toEqual({ ok: false, problem: 'full' });
+  });
+
   it('when the first guest leaves, the next guest becomes guestId', async () => {
     await join('g1');
     await join('g2');

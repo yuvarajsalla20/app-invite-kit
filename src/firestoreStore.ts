@@ -64,13 +64,17 @@ export function firestoreInviteStore(db: Firestore, names: Partial<FirestoreInvi
     if (!s.exists()) return 'not-found';
     const invite = toInvite(code, s.data());
     if (invite.usedBy) return 'used';
-    // The phone's clock is behind the server's: on the server the code has already run out.
+    if (invite.connectionId) {
+      const hostIn = await connectionIdOf(invite.hostId);
+      if (hostIn !== invite.connectionId) return 'not-found';
+      // The host is still in the group the code was made for. The guest can't read the group to count it, so a
+      // refusal here is read as full, whatever time is left on the code: short codes (10 minutes or less) are always
+      // within CLOCK_MARGIN_MS of expiry, and calling a full group expired would send the host to make a new code.
+      return 'full';
+    }
+    // Nothing else explains it: the phone's clock is behind the server's, and on the server the code has run out.
     if (now >= invite.expiresAt - CLOCK_MARGIN_MS) return 'expired';
-    if (!invite.connectionId) return null;
-    const hostIn = await connectionIdOf(invite.hostId);
-    if (hostIn !== invite.connectionId) return 'not-found';
-    // The host is still in the group the code was made for, so the only rule left is room: it filled up meanwhile.
-    return 'full';
+    return null;
   };
 
   return {

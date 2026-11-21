@@ -138,7 +138,7 @@ members can read it; other people only see whether someone is connected.
 A code's times come from the phone's clock, which may be a little fast or slow. The rules accept a code whose
 `createdAt` is within `CLOCK_MARGIN_MS` (10 minutes) of Google's time and whose lifetime is at most `MAX_EXPIRY_MS`, so a
 code works for at most `MAX_EXPIRY_MS` + 10 minutes of server time. When the server refuses an accept that the phone
-thought was fine, the store reads the code again and answers `'expired'`, `'used'`, `'not-found'` or `'full'`.
+thought was fine, the store reads the code again and answers `'not-found'`, `'used'` or (for a group still running) `'full'`, and `'expired'` only when nothing else explains it.
 
 `firebase` is an optional peer dependency, needed only for this entry.
 
